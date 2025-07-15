@@ -16,7 +16,7 @@ Detailed instructions on how to build ECF on Windows or Unix/Linux are covered a
 
 1. Install and build ECF as instructed in their documentation.
 2. Navigate to the Symoblic Regression program directory, located in ```ECF/examples/GPSymbReg```
-3. Edit the flags of the provided ```Makefile```.
+3. Edit the flags of the provided ```Makefile```
 
    - If an installation folder was specified, edit the ```-I``` and ```-L``` flags accordingly (consult the documentation for details).
    - If libary was compiled in the default folder (```/usr/local/lib```), remove the ```-I``` and ```-L``` flags.
@@ -24,3 +24,13 @@ Detailed instructions on how to build ECF on Windows or Unix/Linux are covered a
 6. Run with the command: ```mpirun -n {number of nodes} ./symbreg parameters.txt```
 
 If the linker cannot find the library, you will have to add the installation library directory to LD_LIBRARY_PATH, e.g. ```export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH```
+
+### Running with your own Dataset
+
+To run the program with your own dataset, add the dataset file to the ```GPSymbReg``` directory. ***Please make sure that dataset is formatted such that each row is a datapoint and each column is separated by a single space and the last column is the target.***
+
+Then, edit ```SymbRegEvalOp.cpp``` and ```SymbRegEvalOp.h``` such that ```dataRow``` has the correct features and target name.
+
+Also, edit ```parameters.txt``` so that the terminal set includes the features of your dataset.
+
+Recomplile and run with the same command.
