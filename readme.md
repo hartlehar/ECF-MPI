@@ -1,6 +1,6 @@
 # ECF with MPI
 
-ECF is a C++ framework intended for application of any type of evolutionary computation. *The Symbolic Regression program has been specifically modified to run with MPI so that it can perform efficiently in supercomputers. 
+ECF is a C++ framework intended for application of any type of evolutionary computation. *The Symbolic Regression program has been specifically modified to run with MPI so that it can perform efficiently in supercomputers.*
 
 Info about the original library is available at: http://ecf.zemris.fer.hr/
 
