@@ -496,9 +496,30 @@ void Algorithm::restorePopulation()
 
 bool Algorithm::initializePopulation(StateP state)
 {
-	for(uint iDeme = 0; iDeme < state->getPopulation()->size(); iDeme++)
-		for(uint iInd = 0; iInd < state->getPopulation()->at(iDeme)->size(); iInd++)
-			evaluate(state->getPopulation()->at(iDeme)->at(iInd));
+	int t = 0;
+	std::vector<std::thread> threads;
+	threads.reserve(state->numThreads);
+
+	for(uint iDeme = 0; iDeme < state->getPopulation()->size(); iDeme++) {
+		for(uint iInd = 0; iInd < state->sec; iInd++) {
+			if (t == state->numThreads) {
+				for (int j=0; j<state->numThreads; j++) {
+					if (threads[j].joinable()) threads[j].join();
+				}
+				threads.clear();
+				t = 0;
+			}
+
+			threads.emplace_back(&Algorithm::evaluate, this, state->getPopulation()->at(iDeme)->at(iInd));
+			t++;
+		}
+			
+	}
+
+	for (auto& thread : threads){
+		if (thread.joinable()) thread.join();
+	}
+
 	return true;
 }
 

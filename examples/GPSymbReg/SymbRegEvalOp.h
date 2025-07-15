@@ -27,11 +27,19 @@
 class SymbRegEvalOp : public EvaluateOp
 {
 public:
+	struct dataRow {
+		double hh, Oi, r0, dr, zz, a1;
+	};
+
 	FitnessP evaluate(IndividualP individual);
 	bool initialize(StateP);
-	std::vector<double> domain;
+	std::vector<dataRow> domain;
 	std::vector<double> codomain;
 	uint nSamples;
+	double yMean;
+	int numThreads;
+
+	void computeChunk(int, int, Tree::Tree*, double&, double&); 
 };
 typedef std::shared_ptr<SymbRegEvalOp> SymbRegEvalOpP;
 

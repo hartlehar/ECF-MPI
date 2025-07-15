@@ -2,7 +2,9 @@
 #include <fstream>
 #include <iomanip>
 #include <time.h>
-
+#include <unistd.h>
+#include <string.h>
+#include "mpi.h"
 
 /**
  * \brief Construct the one and only State object.
@@ -723,6 +725,13 @@ bool State::initialize(int argc, char **argv)
 	argv_ = argv;
 	std::string config_file;
 
+	MPI_Init(&argc, &argv);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	finished = false;
+
+	std::cout << "My ID " << rank << " out of " << size << std::endl;
+
 	try {
 
 		std::cout << "-- ECF, version " << ECF_VERSION << " --" << std::endl;
@@ -1037,7 +1046,76 @@ bool State::addOperator(OperatorP op)
 	return true;
 }
 
+void sendIndividuals(DemeP deme, int nInds, int dest, int tag)
+{
+	if (nInds <= 0 || dest < 0)
+		return;
 
+	int msgLen = 0;
+	std::vector<std::string> payload;
+	payload.reserve(nInds);
+
+	for (int i = 0; i < nInds; i++) {
+		int idx = (dest == 0 ? i : i + nInds * dest);
+		
+		if (idx >= deme->size()) {
+			break;
+		}
+
+		std::string ind = deme->at(idx)->toString();
+		payload.push_back(ind);
+		msgLen += sizeof(int) + ind.size();
+	}
+
+	char *msg = new char[msgLen];
+	int offset = 0;
+	for (auto &s : payload) {
+		int len = s.size();
+		memcpy(msg + offset, &len, sizeof(int));
+		memcpy(msg + offset + sizeof(int), s.c_str(), len);
+		offset += sizeof(int) + len;
+	}
+
+	MPI_Send(msg, msgLen, MPI_CHAR, dest, tag, MPI_COMM_WORLD);
+	delete[] msg;
+}
+
+void recvIndividuals(DemeP deme, int nInds, int source, int tag)
+{
+	if (nInds <= 0 || source < 0)
+		return;
+
+	MPI_Status status;
+	MPI_Probe(source, tag, MPI_COMM_WORLD, &status);
+
+	int msgLen = 0;
+	MPI_Get_count(&status, MPI_CHAR, &msgLen);
+
+	char *msg = new char[msgLen];
+	MPI_Recv(msg, msgLen, MPI_CHAR, source, tag, 
+		MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+	int offset = 0;
+	for (int i = 0; i < nInds; i++) {
+		int idx = (source == 0 ? i : i + nInds * source);
+
+		if (idx >= deme->size()) {
+			break;
+		}
+
+		int len = 0;
+		memcpy(&len, msg + offset, sizeof(int));
+		offset += sizeof(int);
+
+		std::string indStr(msg + offset, len);
+		offset += len;
+
+		XMLNode ind = XMLNode::parseString(indStr.c_str());
+		deme->at(idx)->read(ind);
+	}
+
+	delete[] msg;
+}
 
 //
 // run methods
@@ -1073,37 +1151,37 @@ bool State::run()
 	// adjust with previous runtime (from milestone)
 	startTime_ -= milestoneElapsedTime_;
 
+	int nInd = population_->at(0)->size();
+	sec = nInd / size;
+
+	if (rank == 0) {		// send out Individuals from master process
+		for (int proc=1; proc < size; proc++) {
+			sendIndividuals(population_->at(0), sec, proc, proc);			
+		}
+	} else {				// receiving individuals from master process
+		population_->at(0)->resize(sec);
+		population_->at(0)->shrink_to_fit();
+		recvIndividuals(population_->at(0), sec, 0, rank);
+	}
+
 	// evaluate initial population
 	ECF_LOG(this, 2, "Evaluating initial population...");
 	algorithm_->initializePopulation(state_);
 
-	currentTime_ = time(NULL);
-	elapsedTime_ = currentTime_ - startTime_;
-	ECF_LOG(this, 2, "Generation: " + uint2str(context_->generationNo_));
-	ECF_LOG(this, 2, "Elapsed time: " + uint2str((uint) elapsedTime_));
-	population_->updateDemeStats();
+	
+	if (rank == 0) {		// retrieve Individuals from all processes
+		for (int proc=1; proc < size; proc++) {
+			recvIndividuals(population_->at(0), sec, proc, proc);
+		}
+	} else {				// sending individuals to master process
+		sendIndividuals(population_->at(0), sec, 0, rank);
+	}
 
-	// call user-defined operators
-	ECF_LOG(this, 4, "Calling user defined operators...");
-	for(uint i = 0; i < activeUserOps_.size(); i++)
-		activeUserOps_[i]->operate(state_);
-
-	// termination ops
-	ECF_LOG(this, 4, "Checking termination conditions...");
-	for(uint i = 0; i < activeTerminationOps_.size(); i++)
-		activeTerminationOps_[i]->operate(state_);
-
-	// run the algorithm
-	while(context_->bTerminate_ == false) {
-		context_->generationNo_++;
-		ECF_LOG(this, 5, "Calling the active algorithm");
-		algorithm_->advanceGeneration(state_);
-
+	if (rank == 0) {		// master operation
 		currentTime_ = time(NULL);
 		elapsedTime_ = currentTime_ - startTime_;
 		ECF_LOG(this, 2, "Generation: " + uint2str(context_->generationNo_));
 		ECF_LOG(this, 2, "Elapsed time: " + uint2str((uint) elapsedTime_));
-
 		population_->updateDemeStats();
 
 		// call user-defined operators
@@ -1115,31 +1193,91 @@ bool State::run()
 		ECF_LOG(this, 4, "Checking termination conditions...");
 		for(uint i = 0; i < activeTerminationOps_.size(); i++)
 			activeTerminationOps_[i]->operate(state_);
+	
+		// run the algorithm
+		while(context_->bTerminate_ == false) {
+			// tell workers to continue working
+			MPI_Bcast(&finish	ed, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
 
-		if(context_->bTerminate_)
-			logger_->saveTo(true);
-		else
-			logger_->saveTo();
+			// send out Individuals from master process
+			for (int proc=1; proc < size; proc++) {
+				sendIndividuals(population_->at(0), sec, proc, proc);			
+			}
 
-		if(bSaveMilestone_ && 
-				milestoneInterval_ > 0 && context_->generationNo_ % milestoneInterval_ == 0)
-			saveMilestone();
+			// advance Generation
+			context_->generationNo_++;
+			ECF_LOG(this, 5, "Calling the active algorithm");
+			algorithm_->advanceGeneration(state_);
 
-		migration_->operate(state_);
+			// receive Individuals from other processes
+			for (int proc=1; proc < size; proc++) {
+				recvIndividuals(population_->at(0), sec, proc, proc);
+			}
+
+			currentTime_ = time(NULL);
+			elapsedTime_ = currentTime_ - startTime_;
+			ECF_LOG(this, 2, "Generation: " + uint2str(context_->generationNo_));
+			ECF_LOG(this, 2, "Elapsed time: " + uint2str((uint) elapsedTime_));
+
+			population_->updateDemeStats();
+
+			XMLNode curBest;
+			population_->getHof()->write(curBest);
+			char *out = curBest.createXMLString(true);
+			ECF_LOG(this, 3, "Best of run: \n" + std::string(out));
+			freeXMLString(out);
+
+			// call user-defined operators
+			ECF_LOG(this, 4, "Calling user defined operators...");
+			for(uint i = 0; i < activeUserOps_.size(); i++)
+				activeUserOps_[i]->operate(state_);
+
+			// termination ops
+			ECF_LOG(this, 4, "Checking termination conditions...");
+			for(uint i = 0; i < activeTerminationOps_.size(); i++)
+				activeTerminationOps_[i]->operate(state_);
+
+			migration_->operate(state_);
+		}
+
+		// tell workers to finish
+		finished = true;
+		MPI_Bcast(&finished, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
+	} else {				// worker operation
+		while (true) {
+			// check if master process has finished
+			MPI_Bcast(&finished, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
+			if (finished) break;
+			
+			// retrieve Individuals from master process
+			recvIndividuals(population_->at(0), sec, 0, rank);
+
+			// advance Generation
+			context_->generationNo_++;
+			ECF_LOG(this, 5, "Calling the active algorithm");
+			algorithm_->advanceGeneration(state_);
+
+			// send Individuals to master process
+			sendIndividuals(population_->at(0), sec, 0, rank);
+		}
 	}
 
-	// output HallOfFame
-	XMLNode xHoF;
-	population_->getHof()->write(xHoF);
-	char *out = xHoF.createXMLString(true);
-	ECF_LOG(this, 1, "\nBest of run: \n" + std::string(out));
-	freeXMLString(out);
+	if (rank == 0) {
+		// output HallOfFame
+		XMLNode xHoF;
+		population_->getHof()->write(xHoF);
+		char *out = xHoF.createXMLString(true);
+		ECF_LOG(this, 1, "\nBest of run: \n" + std::string(out));
+		freeXMLString(out);
 
-	logger_->saveTo(true);
-	if(bSaveMilestone_)
-		saveMilestone();
+		logger_->saveTo(true);
+		if(bSaveMilestone_)
+			saveMilestone();
 
-	logger_->closeLog();
+		logger_->closeLog();
+	}
+
+	MPI_Finalize();
 
 	return true;
 }

@@ -44,16 +44,21 @@ bool SteadyStateTournament::initialize(StateP state)
 
 
 bool SteadyStateTournament::advanceGeneration(StateP state, DemeP deme)
-{
+{		
+	std::vector<IndividualP> indvs;
+	for (int i = 0; i < state->sec; i++) {
+		indvs.push_back(deme->at(i));
+	}
+
 	//! this algorithm: one _generation_ is 'deme->size()' _iterations_
-	for(uint iIter = 0; iIter < deme->size(); iIter++) {
+	for (uint iIter = 0; iIter < state->sec; iIter++) {
 
 		ECF_LOG(state, 5, "Individuals in tournament: ");
 
 		std::vector<IndividualP> tournament;
 		for (uint i = 0; i < nTournament_; ++i) {
 			// select a random individual for the tournament
-			tournament.push_back(selRandomOp->select(*deme));
+			tournament.push_back(selRandomOp->select(indvs));
 			ECF_LOG(state, 5, uint2str(i) + ": " + tournament[i]->toString());
 		}
 

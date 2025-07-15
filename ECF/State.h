@@ -16,6 +16,9 @@ typedef std::shared_ptr<State> StateP;
 #include "Communicator.h"
 #include "Migration.h"
 #include "Context.h"
+#include "mpi.h"
+#include <thread>
+#include <mutex>
 
 #include <map>
 
@@ -108,6 +111,10 @@ private:
 
 
 public:
+	int rank, size, sec;
+	bool finished;
+	int numThreads;
+
 	State();
 	virtual ~State()
 	{	}
